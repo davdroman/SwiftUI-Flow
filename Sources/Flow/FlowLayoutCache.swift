@@ -41,8 +41,7 @@ public struct FlowLayoutCache {
         @usableFromInline
         var overflowReporter: (@Sendable (Int) -> Void)?
 
-        /// Whether this subview is a content item, an item separator, or a line separator.
-        /// Separators are injected by ``HFlow``/``VFlow`` between adjacent items and never at the edges.
+        /// The subview's content or separator role, including `ItemSeparator` overrides.
         @usableFromInline
         var separatorRole: SeparatorRole
 

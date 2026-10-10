@@ -5,7 +5,7 @@ import SwiftUI
 /// (Internal.) Composes flow content with feature-generated subviews that must be siblings in one layout pass.
 /// Created by `HFlow.body` / `VFlow.body` when separator injection is configured.
 ///
-/// Item separators are anchored to the content pair they sit between; line separators are anchored to
+/// Injected item separators are identified by their position; line separators are anchored to
 /// the *visual* line boundary they fill (reported back by the layout), so a divider stays the same view
 /// as content rewraps through it instead of jumping. Enumeration uses `Group(subviews:)` where available
 /// and falls back to `_VariadicView` on earlier systems. If line capping also supplies an overflow
@@ -38,7 +38,9 @@ struct _FlowFeatureComposition<Content: View>: View {  // swiftlint:disable:this
         // reporter when line separators are configured.
         let reporter: (@Sendable ([Int]) -> Void)? = lineSeparator == nil ? nil : lineStructure.reporter()
         return layout {
-            interleaved(reporter: reporter)
+            interleaved()
+                // Attach after enumeration because legacy proxies drop source layout metadata.
+                .layoutValue(key: LineStructureReporterKey.self, value: reporter)
             if let overflowBuilder {
                 overflowBuilder(overflowCount.value)
                     .overflowIndicator(reporter: overflowCount.reporter())
@@ -47,7 +49,7 @@ struct _FlowFeatureComposition<Content: View>: View {  // swiftlint:disable:this
     }
 
     @ViewBuilder
-    private func interleaved(reporter: (@Sendable ([Int]) -> Void)?) -> some View {
+    private func interleaved() -> some View {
         // Capture env values into locals so they're stable for the view-update scope and can be
         // referenced safely inside @ViewBuilder and Group(subviews:) closures.
         let itemSep = itemSeparator
@@ -55,7 +57,6 @@ struct _FlowFeatureComposition<Content: View>: View {  // swiftlint:disable:this
         let tagged =
             content
             .layoutValue(key: FlexibilityLayoutValueKey.self, value: flexibility)
-            .layoutValue(key: LineStructureReporterKey.self, value: reporter)
             .environment(\.maxLines, nil)
             .environment(\._flowItemSeparator, nil)
             .environment(\._flowLineSeparator, nil)
@@ -99,20 +100,25 @@ struct _FlowFeatureComposition<Content: View>: View {  // swiftlint:disable:this
 
 // MARK: - Separator injection
 
-/// The shared body of both interleaving paths (``Group(subviews:)`` and the ``_VariadicView``
-/// fallback): emit each element followed by the separators for the gap after it, except after the last.
-/// `lineOf` is the layout-reported line structure used to give each separator a stable visual identity.
+/// Emits caller subviews with configured separators between them, using either enumeration path.
+/// `lineOf` includes `ItemSeparator` entries so line separators retain their visual boundary identity.
 @ViewBuilder
 private func interleavedContent<Elements: RandomAccessCollection>(
     _ elements: Elements,
     itemSeparator: (() -> AnyView)?,
     lineSeparator: (() -> AnyView)?,
-    lineOf: [Int]
+    lineOf: [Int],
+    separatorRole: ((Elements.Element) -> SeparatorRole)? = nil
 ) -> some View where Elements.Element: View & Identifiable {
     let last = elements.count - 1
     let positionsInLine = linePositions(for: lineOf)
     ForEach(Array(elements.enumerated()), id: \.element.id) { item in
-        item.element
+        if let separatorRole {
+            // Variadic proxies lose layout metadata; restore the role carried by the original view's trait.
+            item.element.layoutValue(key: SeparatorRoleLayoutValueKey.self, value: separatorRole(item.element))
+        } else {
+            item.element
+        }
         if item.offset < last {
             separators(
                 afterIndex: item.offset,
@@ -125,8 +131,8 @@ private func interleavedContent<Elements: RandomAccessCollection>(
     }
 }
 
-/// Emits the separators that follow the content item at `index`: item and line separators live in
-/// every configured gap so the layout can decide which one is visible after line breaking.
+/// Emits automatic separators after caller subview `index`.
+/// `SeparatorPlan` selects which separators to use between content items.
 @ViewBuilder
 private func separators(
     afterIndex index: Int,
@@ -136,8 +142,8 @@ private func separators(
     positionsInLine: [Int]
 ) -> some View {
     if let itemSeparator {
-        // An item separator lives in every gap so its breadth always factors into line breaking, and the
-        // layout shows or parks it as content rewraps. Identity is the (line, positionInLine) of the item
+        // An item separator is injected into every caller subview gap. The plan reserves its breadth
+        // only when no directive overrides it. Identity is the (line, positionInLine) of the subview
         // before the gap — positional, so it survives rewraps. Disabling animation makes it snap to its
         // place (or out of view) instead of sliding to/from the off-screen park position, while it still
         // tracks its row frame-to-frame during a live resize.
@@ -152,9 +158,8 @@ private func separators(
     }
 }
 
-/// Whether the content wraps onto a new line between item `index` and the next, per the reported
-/// structure. Items absent from the visible output carry `SeparatorLayout.hiddenLineSentinel` (< 0);
-/// they are never a boundary so that no spurious separator is injected before a hidden item.
+/// Whether adjacent caller subviews belong to different visible lines.
+/// `ItemSeparator` entries use the preceding content line. Negative line indices indicate hidden entries.
 private func isLineBoundary(after index: Int, lineOf: [Int]) -> Bool {
     guard lineOf.indices.contains(index + 1) else { return false }
     let current = lineOf[index]
@@ -175,7 +180,7 @@ private func linePositions(for lineOf: [Int]) -> [Int] {
     return result
 }
 
-/// Positional identity for the item separator after content position `index`.
+/// Identity of the item separator after caller subview `index`.
 /// Uses (line, positionInLine) derived from the reported line structure so the separator's SwiftUI
 /// identity matches its visual slot — not the element it follows — and survives rewraps stably.
 /// Falls back to (0, index) on the bootstrap frame before the layout has reported anything.
@@ -186,7 +191,7 @@ private func itemSeparatorIdentity(afterPosition index: Int, lineOf: [Int], posi
     return ItemSeparatorIdentity(line: 0, positionInLine: index)
 }
 
-/// Positional identity for the line separator after content position `index`.
+/// Identity of the line separator after caller subview `index`.
 /// Visible line separators use their visual boundary once line structure is known; hidden/bootstrap
 /// placeholders use the gap position so every gap contributes a distinct separator subview.
 private func lineSeparatorIdentity(afterPosition index: Int, lineOf: [Int]) -> LineSeparatorIdentity {
@@ -214,6 +219,12 @@ struct SeparatorInterleaver: _VariadicView.MultiViewRoot {
 
     @ViewBuilder
     func body(children: _VariadicView.Children) -> some View {
-        interleavedContent(children, itemSeparator: itemSeparator, lineSeparator: lineSeparator, lineOf: lineOf)
+        interleavedContent(
+            children,
+            itemSeparator: itemSeparator,
+            lineSeparator: lineSeparator,
+            lineOf: lineOf,
+            separatorRole: { $0[SeparatorRoleLayoutValueKey.self] }
+        )
     }
 }

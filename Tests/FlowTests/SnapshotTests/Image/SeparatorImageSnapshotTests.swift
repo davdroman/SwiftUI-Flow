@@ -63,6 +63,36 @@
             assertSnapshot(of: view, as: .image(size: CGSize(width: 344, height: 260)))
         }
 
+        @Test func boundaryDirectives() {
+            let view = VStack(alignment: .leading, spacing: 20) {
+                boundaryFlow.frame(width: 160, alignment: .leading)
+                boundaryFlow.frame(width: 210, alignment: .leading)
+            }
+            .padding(12)
+            .background(Color.white)
+            assertSnapshot(of: view, as: .image(size: CGSize(width: 234, height: 120)))
+        }
+
+        private var boundaryFlow: some View {
+            HFlow(itemSpacing: 5, rowSpacing: 4) {
+                ItemSeparator { Color.red.frame(width: 90, height: 20) }
+                numberedBox(1)
+                numberedBox(2)
+                ItemSeparator { Color.orange.frame(width: 20, height: 4) }
+                numberedBox(3)
+                ItemSeparator { EmptyView() }
+                numberedBox(4)
+                ItemSeparator { Color.red.frame(width: 90, height: 20) }
+            }
+            .itemSeparator { Color.black.frame(width: 10, height: 4) }
+            .lineSeparator { Color.gray.frame(height: 2) }
+        }
+
+        private func numberedBox(_ value: Int) -> some View {
+            Text(value.formatted()).font(.system(size: 12)).foregroundStyle(.black)
+                .frame(width: 30, height: 20).background(Color.blue.opacity(0.2))
+        }
+
         @Test func vflow_itemSeparator() {
             let view = VFlow(itemSpacing: 8, columnSpacing: 12) {
                 ForEach(tags, id: \.self) { tag($0) }

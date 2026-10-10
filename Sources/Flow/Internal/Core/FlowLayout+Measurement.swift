@@ -60,9 +60,17 @@ extension FlowLayout {
 
     /// Spacing before the subview at `offset`: the explicit `itemSpacing` if set, otherwise the
     /// subviews' combined `ViewSpacing` preferences. Zero before the first subview.
+    /// For the overflow indicator, spacing comes from the preceding content item, skipping separators.
     func spacing(before offset: Int, cache: FlowLayoutCache) -> CGFloat {
         guard offset > cache.subviewsCache.startIndex else { return 0 }
-        return cache.spacing(from: offset - 1, to: offset, itemSpacing: itemSpacing, axis: axis)
+        let previous: Int?
+        if offset == cache.overflowSubviewIndex {
+            previous = cache.subviewsCache[..<offset].lastIndex { !$0.separatorRole.isSeparator }
+        } else {
+            previous = offset - 1
+        }
+        guard let previous else { return 0 }
+        return cache.spacing(from: previous, to: offset, itemSpacing: itemSpacing, axis: axis)
     }
 
     /// The breadth the breaker may fill: the proposed breadth, or `.infinity` when it is unspecified.

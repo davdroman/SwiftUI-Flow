@@ -27,6 +27,28 @@ HFlow {
 }
 ```
 
+### Custom separators between specific items
+
+Place an ``ItemSeparator`` between two items to replace their automatic item
+separator. You can also use it without an `itemSeparator` modifier.
+
+```swift
+HFlow(itemSpacing: 6) {
+    Text("Alpha")
+    ItemSeparator { Text("|") }
+    Text("Beta")
+    Text("Gamma")
+}
+.itemSeparator { Text("•") }
+```
+
+The flow uses `|` between Alpha and Beta and `•` between Beta and Gamma when
+the items share a line. `itemSpacing` applies on both sides of each separator.
+
+To omit a separator, use `ItemSeparator { EmptyView() }`. The items keep their
+ordinary spacing. For a 10-point gap in an `HFlow`, set `itemSpacing` to zero
+and use `ItemSeparator { Color.clear.frame(width: 10, height: 0) }`.
+
 ### Line separators
 
 A line separator becomes its own line between two rows (or columns), so spacing applies on

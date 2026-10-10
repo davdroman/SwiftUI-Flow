@@ -38,9 +38,7 @@ struct SeparatorLayout {
 
     // MARK: - Input seam
 
-    /// Reduces the breaker input to content items only: each content item keeps its sizing but its
-    /// leading spacing folds in the preceding item separator's breadth. Separator subviews are dropped
-    /// from line breaking entirely and re-materialized in ``materialize(in:justified:proposal:)``.
+    /// Returns content-only breaker input, including selected item separators in each item's leading spacing.
     func foldIntoContent(_ input: BreakerInput) -> BreakerInput {
         let itemBySubview = Dictionary(uniqueKeysWithValues: zip(input.subviewIndices, input.items))
         var items: [MeasuredItem] = []
@@ -61,6 +59,7 @@ struct SeparatorLayout {
     /// plus the item separator's breadth and its own spacing when an eligible gap carries one. The
     /// breaker drops it automatically where a line breaks (first-on-line items get zero leading space),
     /// which is exactly where the item separator yields to a line separator.
+    /// Empty overrides use ordinary content-to-content spacing.
     private func breakerSpacing(beforeContentPosition position: Int) -> CGFloat {
         guard position > 0 else { return 0 }
         let current = plan.contentIndices[position]
@@ -99,17 +98,27 @@ struct SeparatorLayout {
         return LineAdaptation(lines: result, hidden: unusedSeparators(placed: placed), lineStructure: structure)
     }
 
-    /// The line index of every content item, in content order, derived from the content-only wrapping.
-    /// Reported back to the view layer so line separators can be identified by their visual position.
-    /// Hidden items (capped by maxLines) are assigned `hiddenLineSentinel` so the view layer can
-    /// distinguish them from visible items on line 0 and avoid injecting spurious separators.
+    /// Returns line indices in caller subview order, excluding injected separators.
+    /// `ItemSeparator` entries use the preceding content item's line index.
+    /// Hidden content and overrides without preceding visible content use `hiddenLineSentinel`.
     func lineStructure(of visible: WrappedLines) -> [Int] {
-        var lineOf = [Int](repeating: SeparatorLayout.hiddenLineSentinel, count: plan.contentIndices.count)
+        var lineBySubview: [Int: Int] = [:]
         for lineIndex in visible.indices {
             for item in visible[lineIndex] {
-                if let position = plan.position(ofContentIndex: item.index) {
-                    lineOf[position] = lineIndex
-                }
+                lineBySubview[item.index] = lineIndex
+            }
+        }
+        var lineOf: [Int] = []
+        var precedingLine = Self.hiddenLineSentinel
+        for index in cache.subviewsCache.indices {
+            switch cache.subviewsCache[index].separatorRole {
+                case .content:
+                    precedingLine = lineBySubview[index] ?? Self.hiddenLineSentinel
+                    lineOf.append(precedingLine)
+                case .itemSeparatorOverride:
+                    lineOf.append(precedingLine)
+                case .itemSeparator, .lineSeparator:
+                    break
             }
         }
         return lineOf
@@ -120,8 +129,10 @@ struct SeparatorLayout {
     static let hiddenLineSentinel = -1
 
     /// The eligible line separator for the boundary before the line that begins with `contentIndex`.
+    /// Returns `nil` for the overflow indicator.
     private func lineSeparator(startingLineAt contentIndex: Int) -> Int? {
-        guard let position = plan.position(ofContentIndex: contentIndex),
+        guard contentIndex != cache.overflowSubviewIndex,
+            let position = plan.position(ofContentIndex: contentIndex),
             let gap = plan.gap(before: position),
             gap.isEligible
         else { return nil }
@@ -164,8 +175,10 @@ struct SeparatorLayout {
     /// The eligible item separator drawn before content item `contentIndex`, or `nil` when its gap
     /// carries no in-line separator. Used by both seams — to reserve its breadth before wrapping, and
     /// to re-insert it after.
+    /// Returns `nil` for the overflow indicator.
     private func itemSeparator(before contentIndex: Int) -> ItemSeparator? {
-        guard let position = plan.position(ofContentIndex: contentIndex),
+        guard contentIndex != cache.overflowSubviewIndex,
+            let position = plan.position(ofContentIndex: contentIndex),
             let gap = plan.gap(before: position),
             gap.isEligible,
             let separator = gap.itemSeparator

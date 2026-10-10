@@ -9,7 +9,7 @@
     @Suite(.serialized, .tags(.requirements))
     @MainActor
     struct FlowReportingRegressionTests {
-        @Test(arguments: [false, true], [Feature.overflow, .separators, .combined])
+        @Test(arguments: [false, true], [Feature.overflow, .separators, .combined, .boundaries])
         func intrinsicSizing_settlesAfterResizing(vertical: Bool, feature: Feature) async throws {
             _ = NSApplication.shared
             let activity = Activity()
@@ -58,7 +58,7 @@
         }
 
         enum Feature: Sendable {
-            case overflow, separators, combined
+            case overflow, separators, combined, boundaries
         }
 
         private final class Activity {
@@ -82,6 +82,7 @@
                     decorate(
                         VFlow {
                             ForEach(input.sizes.indices, id: \.self) { index in
+                                if feature == .boundaries { ItemSeparator { EmptyView() } }
                                 Color.red.frame(width: 20, height: input.sizes[index])
                             }
                         }
@@ -90,6 +91,7 @@
                     decorate(
                         HFlow {
                             ForEach(input.sizes.indices, id: \.self) { index in
+                                if feature == .boundaries { ItemSeparator { EmptyView() } }
                                 Color.red.frame(width: input.sizes[index], height: 20)
                             }
                         }
@@ -127,6 +129,8 @@
                         content.lineSeparator(separator)
                     case .combined:
                         content.maxLines(1, overflow: badge).lineSeparator(separator)
+                    case .boundaries:
+                        content.maxLines(1, overflow: badge).itemSeparator(separator).lineSeparator(separator)
                 }
             }
 

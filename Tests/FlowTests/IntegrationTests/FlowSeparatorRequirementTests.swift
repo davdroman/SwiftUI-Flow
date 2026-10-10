@@ -192,6 +192,158 @@ struct FlowSeparatorRequirementTests {
         }
     }
 
+    @Test(arguments: [false, true])
+    func boundaryOverrideReplacesDefaultSeparator(empty: Bool) {
+        let marker: TestSubview = 20 × 10
+        marker[SeparatorRoleLayoutValueKey.self] = .itemSeparatorOverride(isEmpty: empty)
+        let subviews = interleaved(content: [30 × 10, marker, 30 × 10], itemSeparator: { 50 × 10 })
+        let result = FlowLayoutScenario(
+            layout: .horizontal(horizontalSpacing: 5, verticalSpacing: 0),
+            subviews: subviews,
+            proposal: 90 × 100
+        ).layoutThatFits()
+        #expect(result.reportedSize == CGSize(width: empty ? 65 : 90, height: 10))
+        #expect(result.subviews[4].placement?.position == CGPoint(x: empty ? 35 : 60, y: 0))
+        #expect(isParked(result.subviews[1], in: result.reportedSize))
+        #expect(isParked(result.subviews[3], in: result.reportedSize))
+        #expect(isParked(result.subviews[2], in: result.reportedSize) == empty)
+    }
+
+    @Test(arguments: [false, true])
+    func boundaryOverrideWrapsWithoutChangingLineSeparators(empty: Bool) {
+        let marker: TestSubview = 20 × 10
+        marker[SeparatorRoleLayoutValueKey.self] = .itemSeparatorOverride(isEmpty: empty)
+        let subviews = interleaved(
+            content: [30 × 10, marker, 30 × 10],
+            itemSeparator: { 5 × 10 },
+            lineSeparator: { stretchingSeparator(depth: 2) }
+        )
+        let result = FlowLayoutScenario(
+            layout: .horizontal(horizontalSpacing: 5, verticalSpacing: 0),
+            subviews: subviews,
+            proposal: 60 × 100
+        ).layoutThatFits()
+        #expect(result.reportedSize == CGSize(width: 30, height: 22))
+        #expect(result.subviews[6].placement?.position == CGPoint(x: 0, y: 12))
+        #expect(result.subviews[5].placement?.position == CGPoint(x: 0, y: 10))
+        for index in [1, 2, 3, 4] {
+            #expect(isParked(result.subviews[index], in: result.reportedSize))
+        }
+    }
+
+    @Test func edgeAndSoleDirectivesAreNotContent() {
+        let leading: TestSubview = 90 × 20
+        let trailing: TestSubview = 90 × 20
+        leading[SeparatorRoleLayoutValueKey.self] = .itemSeparatorOverride(isEmpty: false)
+        trailing[SeparatorRoleLayoutValueKey.self] = .itemSeparatorOverride(isEmpty: false)
+        let result = FlowLayoutScenario(
+            layout: .horizontal(horizontalSpacing: 5, verticalSpacing: 0),
+            subviews: interleaved(content: [leading, 30 × 10, trailing], itemSeparator: { 10 × 10 }),
+            proposal: 100 × 100
+        ).layoutThatFits()
+        #expect(result.reportedSize == CGSize(width: 30, height: 10))
+        #expect(result.subviews[2].placement?.position == .zero)
+        for index in [0, 1, 3, 4] {
+            #expect(isParked(result.subviews[index], in: result.reportedSize))
+        }
+        FlowLayoutScenario(
+            layout: .horizontal(horizontalSpacing: 5, verticalSpacing: 0),
+            subviews: [leading],
+            proposal: 100 × 100
+        ).assertExpectedSize(.zero)
+    }
+
+    @Test func lastConsecutiveDirectiveWins() {
+        let custom: TestSubview = 20 × 10
+        custom[SeparatorRoleLayoutValueKey.self] = .itemSeparatorOverride(isEmpty: false)
+        let empty: TestSubview = 0 × 0
+        empty[SeparatorRoleLayoutValueKey.self] = .itemSeparatorOverride(isEmpty: true)
+        FlowLayoutScenario(
+            layout: .horizontal(horizontalSpacing: 5, verticalSpacing: 0),
+            subviews: interleaved(content: [30 × 10, custom, empty, 30 × 10], itemSeparator: { 10 × 10 }),
+            proposal: 100 × 100
+        ).assertExpectedSize(65 × 10)
+    }
+
+    @Test(arguments: [false, true])
+    func cappedNeighborsHideDirectivesAndOnlyCountContent(empty: Bool) {
+        final class Counts: @unchecked Sendable { var values: [Int] = [] }
+        let counts = Counts()
+        let marker: TestSubview = 20 × 10
+        marker[SeparatorRoleLayoutValueKey.self] = .itemSeparatorOverride(isEmpty: empty)
+        let overflow: TestSubview = 10 × 10
+        overflow[IsOverflowLayoutValueKey.self] = true
+        overflow[OverflowReporterKey.self] = { counts.values.append($0) }
+        let subviews =
+            interleaved(
+                content: [30 × 10, marker, 30 × 10, 30 × 10],
+                itemSeparator: { 50 × 10 },
+                lineSeparator: { stretchingSeparator(depth: 2) }
+            ) + [overflow]
+        let result = FlowLayoutScenario(
+            layout: .horizontal(horizontalSpacing: 5, verticalSpacing: 0, maxLines: 1),
+            subviews: subviews,
+            proposal: 50 × 100
+        ).layoutThatFits()
+        #expect(result.reportedSize == CGSize(width: 45, height: 10))
+        #expect(counts.values.last == 2)
+        #expect(result.subviews[0].placement?.position == .zero)
+        #expect(overflow.placement?.position == CGPoint(x: 35, y: 0))
+        for subview in result.subviews.dropFirst().dropLast() {
+            #expect(isParked(subview, in: result.reportedSize))
+        }
+    }
+
+    @Test func reportedStructureIncludesDirectiveSlotsWithoutCreatingLines() {
+        let marker: TestSubview = 0 × 0
+        marker[SeparatorRoleLayoutValueKey.self] = .itemSeparatorOverride(isEmpty: true)
+        let subviews = interleaved(
+            content: [30 × 10, marker, 30 × 10, 30 × 10],
+            lineSeparator: { stretchingSeparator(depth: 2) }
+        )
+        let cache = FlowLayoutCache(subviews, axis: .horizontal)
+        let separators = SeparatorLayout(cache: cache, axis: .horizontal, itemSpacing: 0)!
+        #expect(
+            separators.lineStructure(of: [
+                [WrappedItem(index: 0, size: 30, leadingSpace: 0)],
+                [WrappedItem(index: 4, size: 30, leadingSpace: 0)],
+            ]) == [0, 0, 1, -1]
+        )
+    }
+
+    @Test func directiveNextToManualBreakIsSuppressed() {
+        let marker: TestSubview = 20 × 10
+        marker[SeparatorRoleLayoutValueKey.self] = .itemSeparatorOverride(isEmpty: false)
+        let result = FlowLayoutScenario(
+            layout: .horizontal(horizontalSpacing: 0, verticalSpacing: 0),
+            subviews: interleaved(
+                content: [30 × 10, marker, testLineBreakSubview(), 30 × 10],
+                itemSeparator: { 5 × 10 },
+                lineSeparator: { stretchingSeparator(depth: 2) }
+            ),
+            proposal: 100 × 100
+        ).layoutThatFits()
+        #expect(result.reportedSize == CGSize(width: 30, height: 20))
+        for subview in result.subviews where subview[SeparatorRoleLayoutValueKey.self].isSeparator {
+            #expect(isParked(subview, in: result.reportedSize))
+        }
+    }
+
+    @Test func trailingDirectiveDoesNotSeparateOverflowIndicator() {
+        let marker: TestSubview = 20 × 10
+        marker[SeparatorRoleLayoutValueKey.self] = .itemSeparatorOverride(isEmpty: false)
+        let overflow: TestSubview = 10 × 10
+        overflow[IsOverflowLayoutValueKey.self] = true
+        let result = FlowLayoutScenario(
+            layout: .horizontal(horizontalSpacing: 5, verticalSpacing: 0, maxLines: 1),
+            subviews: [30 × 10, 30 × 10, marker, overflow],
+            proposal: 50 × 100
+        ).layoutThatFits()
+        #expect(result.reportedSize == CGSize(width: 45, height: 10))
+        #expect(overflow.placement?.position == CGPoint(x: 35, y: 0))
+        #expect(isParked(marker, in: result.reportedSize))
+    }
+
     // MARK: - Helpers
 
     /// Interleaves item/line separators between the given content subviews, mirroring what the
